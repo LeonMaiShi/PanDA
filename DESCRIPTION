@@ -1,0 +1,21 @@
+Package: PanDM
+Type: Package
+Title: Pan-cancer Differential Methylation analysis
+Version: 1.0.1
+Date: Mar-08-2017
+Author: Mai Shi, Stephen Kwok-Wing Tsui, Hao Wu, Yingying Wei
+Maintainer: Mai Shi <mshi@link.cuhk.edu.hk>
+Description: This package is designed for pan-cancer differential DNA methylation (DM) 
+    analysis. It provides a function that elucidates the underlying data structure of 
+    the input summary statistics from multiple cancer types. The learned data characteristics
+    are then used to make inference of the DM status for each CpG site in every 
+    cancer type, as well as to group them into different clusters according to the pan-cancer 
+    DM patterns.  
+Depends: matrixStats, parallel, gplots
+License: GPL-2
+Encoding: UTF-8
+LazyData: true
+Suggests: knitr, rmarkdown
+VignetteBuilder: knitr
+LinkingTo: Rcpp
+Imports: Rcpp

@@ -1,0 +1,141 @@
+---
+title: "Pan-cancer Differential Methylation Analysis"
+author: "Mai Shi, Stephen Kwok-Wing Tsui, Hao Wu, Yingying Wei"
+date: ""
+output: pdf_document
+bibliography: PanDM.bib
+csl: biomed-central.csl
+vignette: >
+  %\VignetteIndexEntry{PanDM_vignette}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+---
+
+## Introduction
+DNA methylation is one of the key epigenetic regulators contributing to cancer development. Investigating the aberrant DNA methylation between normal and disease samples over diverse cancer types is helpful for us to systematically understand the role of DNA methylation in tumorigenesis. Such comprehensive study, known as pan-cancer differential methylation (DM) analysis, can facilitate our knowledge of the common and distinct DM patterns in different cancer types. However, current pan-cancer analyses methods call differential methylation separately for each cancer type in the first stage and then directly summarize the findings from separate analyses without a solid statistical model. This type of strategy loses statistical power and fails to offer a systematic view for DM patterns across cancer types, which will subsequently miss the underlying shared and cancer-type-specific DM patterns. Here in this R package, we provide a novel rigorous statistical model _PanDM_ for pan-cancer DM analysis. By jointly modelling multiple methylomes from a set of distinct cancer types, _PanDM_ is able to learn the similarities and differences of pan-cancer DM patterns. Furthermore, _PanDM_ can also cluster CpG sites according to the learned DM patterns and in turn use the clustering information to enhance DM detection for each cancer type.
+
+## Input data
+Currently, _PanDM_ takes a matrix of summary statistics as the input data. Each row of the matrix can correspond to a probe (CpG site), a gene or a differentially methylated region (DMR). Each column of the matrix corresponds to one of the cancer types to be investigated. The reason for using summary statistics instead of raw data is that the potential heterogeneity in the difference between normal and disease methylomes vary in distinct cancer types. It will be better that the non-biological factors which may affect the DNA methylation level, for instance batch effects, are controlled within the same cancer type.
+
+Therefore, the recommended preprocessing workflow includes quality control of raw signal intensities, data normalization and calling differential methylation for each cancer type separately by a rigorous method. Choice of preprocessing pipeline depends on both the types of methylation data users have and the statistical models users would prefer for DM calling . R packages such as [_minfi_] [1] [@aryee2014minfi], [_BiSeq_] [2] [@hebestreit2013detection] and [_RnBeads_] [3] [@assenov2014comprehensive] provide complete but quite different pipelines for analyzing array-based, bisulfite-sequencing-based and both types of data respectively. After all the pre-processes, the summary statistics, especially _p_-values that indicate the significance of DM, from the separate analysis of each cancer type are combined to generate the input matrix of _PanDM_. Whether _PanDM_ should work on probe-, gene- or DMR-level is also determined by the users.
+
+[1]: https://bioconductor.org/packages/release/bioc/html/minfi.html
+[2]: https://bioconductor.org/packages/release/bioc/html/BiSeq.html
+[3]: https://bioconductor.org/packages/release/bioc/html/RnBeads.html
+
+Here we use the simulation data `simudat` for illustration. `simudat` mimics the study that we want to investigate the pan-cancer DM patterns in 5 cancer types. `simudat` is composed of the _p_-values of 10,000 CpG sites from initial separate DM calling for each of the 5 cancer types. As the "empirical null" approach [@efron2004large] is adopted in our model, we first transform the raw _p_-values matrix into corresponding _z_-values matrix by R function `qnorm`.
+
+```{r}
+suppressMessages(suppressWarnings(library(PanDM)))
+data(simudat)
+colnames(simudat)
+head(simudat)
+simudat_z <- qnorm(simudat) # transform the raw p-values into corresponding z-values
+```
+
+## Model fitting
+Once we have the organized input data matrix, we can fit _PanDM_ with a pre-specified number of clusters `K`. As mentioned in our paper [@shi2017pandm], `K` is a parsimonious representation of the true number of clusters. A number deviated from `K` can still reflect the main patterns as well as improve signal detection. Hence, a roughly estimated number of clusters is acceptable here if the major DM patterns and more accurate DM identification are preferred.
+
+```{r}
+# In this example, we set K = 3 to figure out the three major pan-cancer DM patterns 
+# in the simudat. The tolerance bound epsilon = 1e-04 suggests that the maximum 
+# abosulte errors of the estimated parameters are less than 0.01%.
+set.seed(2017)
+fitresult <- PanDM(simudat_z, 3, epsilon = 1e-04, max.iter = 1000, 
+                   save.initial = FALSE, para.cores = 0)
+```
+
+However, if the number of clusters is hard to determine, it is recommended to run _PanDM_ for a set of different `K`s and choose the one with the minimal BIC.
+
+```{r}
+set.seed(2017)
+myK <- c(2:6)
+resultlist <- lapply(myK, function(K)PanDM(simudat, K, epsilon = 1e-04, max.iter = 200, 
+                                           save.initial = FALSE, para.cores = 0))
+PanDM_BIC(resultlist, BICplot = FALSE)
+```
+
+A smaller `epsilon` makes the function return more accurate results. Meanwhile, it also leads to the increase of computational time. Since _PanDM_ adopts Expectation Maximization (EM) algorithm [@dempster1977maximum] for parameter estimation, a large number of iterations are required for the algorithm to converge with a small `epsilon`. Hence, we include an additional argument `max.iter`, the maximum number of iterations, to control the balance between the accuracy of results and computational time. 
+
+More specifically, on one hand, if we want to compare the results from a large set of `K`s to find out the best number of patterns in the data without the necessity of highly accurate results for each `K`, we can fix the `max.iter`s to a relatively smaller but still reasonable value (depending on the scale of input data). In this case, much time can be saved while the major differences among distinct `K`s are still captured. On the other hand, if we want to obtain more precise results for a specific `K` with less concern about time, we can assign a considerable value (or the default 5,000) to `max.iter` to ensure that the EM algorithm in _PanDM_ keeps iterating until the convergence criterion `epsilon` is met. As shown in the first example, for the `simudat` with `K = 3`, the function has run less than 850 iterations to achieve the accuracy of `epsilon = 1e-04`. 
+
+In addition, the dimension of the input data also has influence on both speed of calculation (a positive correlation) and accuracy of results (a smaller `epsilon` is required to achieve the same level of accuracy for more data points). Therefore, users are suggested to take the size of input data into consideration as well when determining the values of `epsilon` and `max.iter`.
+
+To reduce the computational burden from large data sets as well as to speed up calculation, _PanDM_ supports for parallel computing by setting the parameter `para.cores` larger than 1, if the program is run on a __non-Windows__ platform.
+
+## Results interpretation
+The PanDM model-fitting results can be explored in the following aspects.
+
+### BIC
+To choose the best `K` describing the true number of pan-cancer DM patterns learned by _PanDM_, we can generate the BIC plot by
+
+```{r, fig.width=7, fig.height=4}
+PanDM_BIC(resultlist)
+```
+
+The `K` with minimal BIC is regarded as the number of _PanDM_ clusters closest to the truth.
+
+### Pan-cancer DM patterns
+The pan-cancer DM patterns are represented by the estimated parameter matrix $\hat{Q}$. Following codes are an example for visualization of the pan-cancer DM patterns by heatmap.
+
+```{r, fig.width=7, fig.height=5}
+best.K <- 3 # the optimal K according to the BIC plot
+finalresult <- resultlist[[which(myK == best.K)]]
+
+pan.pattern <- finalresult$q # pan-cancer DM patterns (clusters)
+prop <- finalresult$p # cluster proportions
+
+# to check whether the learned DM states are flipped, 
+# and adjust the flipped DM states accordingly
+ind <- which(apply(finalresult$mu,2,which.min) == 2) 
+pan.pattern[,ind] <- 1 - pan.pattern[,ind]
+
+colnames(pan.pattern) = colnames(simudat)
+rownames(pan.pattern) = paste0("Cluster_",1:best.K)
+mylab <- sapply(1:best.K,function(x){
+  as.expression(substitute(paste(pat,", ",pi,"=",p,"%"),
+                           list(pat=rownames(pan.pattern)[x],
+                                p=round(prop*100,2)[x])))
+  }) # label of the cluster proportions
+
+heatmap.2(pan.pattern, Rowv = T, Colv = T, dendrogram = "both", 
+          col = colorRampPalette(c("white","black")), density.info = "none",
+          breaks = 1000, trace = "none", scale = "none", margin = c(6,10),
+          main = "Pan-cancer DM Patterns", symm = F, keysize = 0.95, 
+		      key.title = NA, symkey = F, key = TRUE, key.xlab = NA, 
+		      key.ylab = NA, labRow = mylab, cexRow = 1.1, cexCol = 1.1)
+```
+
+### Cluster membership
+We directly obtain the PanDM cluster membership of each probe by
+
+```{r}
+final.cluster <- finalresult$cluster
+names(final.cluster) <- rownames(simudat)
+head(final.cluster)
+```
+
+### DM identification
+The probability of each probe being DM in every cancer type is collected in the `p.post` in `finalresult`. We obtain local fdr and global FDR by
+
+```{r}
+DM.prob <- finalresult$p.post
+DM.prob[,ind] <- 1 - DM.prob[,ind]
+fdr <- 1 - DM.prob # local fdr
+FDR <- g_FDR(fdr) # calculate global FDR 
+```
+
+Finally, if we want to control the global FDR at 0.01, then we can generate the dichotomy table which indicates the DM status all the 10,000 probes in all the 5 cancer types by 
+
+```{r}
+DMlab <- matrix(1,nrow(fdr),ncol(fdr))
+DMlab[FDR < 0.01] <- 2
+head(DMlab) # here 2 corresponds to DM and 1 represents non-DM
+```
+
+## Session info
+```{r}
+sessionInfo()
+```
+
+## References

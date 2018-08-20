@@ -1,0 +1,7 @@
+exportPattern("^[[:alpha:]]+")
+useDynLib(PanDM)
+importFrom(Rcpp, sourceCpp)
+importFrom("stats", "dnorm", "runif")
+importFrom("graphics", "axis", "lines", "plot", "points")
+import(matrixStats, parallel, gplots)
+export(PanDM, g_FDR)
